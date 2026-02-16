@@ -1,0 +1,21 @@
+{
+    "name": "PwmBroker",
+    "version": "1.0.0",
+    "description": "PWM resource broker for unified timer/channel allocation on microcontrollers.",
+    "keywords": "pwm, broker, Esp32, ledc",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/API-rep/PwmBroker.git"
+    },
+    "authors": [
+        {
+            "name": "API",
+            "maintainer": true
+        }
+    ],
+    "build": {
+        "includeDir": "."
+    },
+    "frameworks": "arduino",
+    "platforms": "espressif32"
+}

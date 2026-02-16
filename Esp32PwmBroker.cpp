@@ -8,6 +8,10 @@
  */
 #include "Esp32PwmBroker.h"
 #include "Esp32PwmControl.h"
+#include <esp_log.h>
+#include <cstdio>
+
+int Esp32PwmBroker::_logHasOccured = -1;
 
 
 
@@ -185,7 +189,7 @@ int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
 				_logHasOccured = 0;
 				config.duty_resolution = (ledc_timer_bit_t)resBit;
 				
-				// Test if the ESP32 hardware accepts this resolution for this frequency
+				  // Test if the ESP32 hardware accepts this resolution for this frequency
 				if (ledc_timer_config(&config) == ESP_OK && _logHasOccured == 0) {
 					break; // Found the best stable resolution!
 				}
@@ -193,7 +197,7 @@ int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
 			}
 			esp_log_set_vprintf(&vprintf); // Restore standard serial logs
 
-			// If a valid resolution was found
+			  // If a valid resolution was found
 			if (resBit > 0) {
 				_PwmTimers[i].frequency = freq;
 				_PwmTimers[i].resolution = (ledc_timer_bit_t)resBit;
@@ -203,4 +207,9 @@ int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
 	}
 
 	return -1; // Error: No timers available or frequency incompatible
+}
+
+int Esp32PwmBroker::espSilentLog(const char* string, va_list args) {
+	_logHasOccured = vsnprintf(nullptr, 0, string, args);
+	return 0;
 }

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "PwmBroker.h"
+#include <cstdarg>
 #include <driver/ledc.h>
 
 
@@ -51,4 +52,10 @@ private:
 
     /// Find a suitable exisiting timer or allocate a new one for the requested frequency.
   int8_t allocateTimer(uint32_t freq);
+
+	  /// Silent logger used to probe timer resolution without polluting serial logs.
+	static int espSilentLog(const char* string, va_list args);
+
+	  /// Internal flag set when ESP-IDF emits an error during timer probing.
+	static int _logHasOccured;
 };
