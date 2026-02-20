@@ -30,6 +30,24 @@ Esp32PwmControl::Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, ui
 
 
 
+/**
+ * @details The destructor ensures hardware safety and resource recycling.
+ * 
+ * 1. Hardware Stop: It forces the LEDC channel to stop immediately, 
+ *    preventing the PWM signal from persisting after the object is deleted.
+ * 2. Resource Release: It notifies the Broker to free up the channel and 
+ *    decrement the timer's client counter (RAII pattern).
+ */
+Esp32PwmControl::~Esp32PwmControl() {
+		// --- 1. Stop PWM output immediately for safety ---
+	ledc_stop(LEDC_LOW_SPEED_MODE, _channel, 0);
+
+		// --- 2. Notify the Broker to release hardware resources ---
+	Esp32PwmBroker::getInstance().releaseResource((uint8_t)_channel, (uint8_t)_timer);
+}
+
+
+
 
 /**
  * @details Direct hardware update of the duty cycle.

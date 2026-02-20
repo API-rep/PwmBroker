@@ -14,7 +14,7 @@
         }
     ],
     "build": {
-        "includeDir": "."
+        "includeDir": "src"
     },
     "frameworks": "arduino",
     "platforms": "espressif32"

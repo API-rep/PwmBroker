@@ -16,8 +16,7 @@
 class PwmBroker {
 
 public:
-    // Ensure access the UNIQUE instance of the Broker.
-    // Will be relayed to the architecture-specific implementation (Esp32PwmBroker) through polymorphism.
+
     /// Access the unique instance of the Broker (Singleton).
 	static PwmBroker& getInstance();
 
@@ -26,14 +25,14 @@ public:
 
 
 protected:
-		// Protected constructor and destructor. Only accessible via specialized child classes.
-    // "default" ensures to build a standard version of the constructor and destructor
-    // It can be overridden by child classes if needed.
+
+		// Constructors protected to enforce Singleton pattern via specialized classes.
 	PwmBroker() = default;
 	virtual ~PwmBroker() = default;
 
 		// Prevent cloning of the instance to guarantee the Singleton's uniqueness.
 	PwmBroker(const PwmBroker&) = delete;
+
     // Prevent overwriting the instance through assignment operations.
 	PwmBroker& operator=(const PwmBroker&) = delete;
 };
