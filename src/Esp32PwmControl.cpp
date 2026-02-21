@@ -24,8 +24,8 @@
  * any hardware configuration, as the Broker handles that during the 'Lease'.
  */
 
-Esp32PwmControl::Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, uint32_t freq, uint32_t maxDuty) 
-	: _pin(pin), _channel((ledc_channel_t)channel), _timer((ledc_timer_t)timer), _frequency(freq), _maxDuty(maxDuty) {
+Esp32PwmControl::Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, ledc_mode_t mode, uint32_t freq, uint32_t maxDuty) 
+	: _pin(pin), _channel((ledc_channel_t)channel), _timer((ledc_timer_t)timer), _mode(mode), _frequency(freq), _maxDuty(maxDuty) {
 }
 
 
@@ -40,10 +40,10 @@ Esp32PwmControl::Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, ui
  */
 Esp32PwmControl::~Esp32PwmControl() {
 		// --- 1. Stop PWM output immediately for safety ---
-	ledc_stop(LEDC_LOW_SPEED_MODE, _channel, 0);
+	ledc_stop(_mode, _channel, 0);
 
 		// --- 2. Notify the Broker to release hardware resources ---
-	Esp32PwmBroker::getInstance().releaseResource((uint8_t)_channel, (uint8_t)_timer);
+	Esp32PwmBroker::getInstance().releaseResource((uint8_t)_channel, (uint8_t)_timer, _mode);
 }
 
 
@@ -57,7 +57,15 @@ Esp32PwmControl::~Esp32PwmControl() {
  * @return True if the ESP32 hardware register was updated successfully.
  */
 bool Esp32PwmControl::setDuty(uint32_t value) {
-	return ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, _channel, value, 0) == ESP_OK;
+	if (value > _maxDuty) {
+		return false;
+	}
+
+	if (ledc_set_duty(_mode, _channel, value) != ESP_OK) {
+		return false;
+	}
+
+	return ledc_update_duty(_mode, _channel) == ESP_OK;
 }
 
 
@@ -75,7 +83,7 @@ bool Esp32PwmControl::setDuty(uint32_t value) {
  */
 
 bool Esp32PwmControl::setFrequency(uint32_t hz) {
-	if (ledc_set_freq(LEDC_LOW_SPEED_MODE, _timer, hz) == ESP_OK) {
+	if (ledc_set_freq(_mode, _timer, hz) == ESP_OK) {
 		_frequency = hz;
 		return true;
 	}
@@ -97,5 +105,5 @@ bool Esp32PwmControl::setFrequency(uint32_t hz) {
 
 uint32_t Esp32PwmControl::getDuty() const {
 		// Fetch directly from the ESP32 hardware channel register
-	return ledc_get_duty(LEDC_LOW_SPEED_MODE, _channel);
+	return ledc_get_duty(_mode, _channel);
 }

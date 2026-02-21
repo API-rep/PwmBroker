@@ -9,6 +9,7 @@
 #include "Esp32PwmBroker.h"
 #include "Esp32PwmControl.h"
 #include <esp_log.h>
+#include <soc/soc_caps.h>
 #include <cstdio>
 
 int Esp32PwmBroker::_logHasOccured = -1;
@@ -57,48 +58,81 @@ Esp32PwmBroker& Esp32PwmBroker::getInstance() {
  * fails at any step, it returns a nullptr safely, preventing motor startup.
  */
 
-std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_t freq) {
+std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest) {
+	for (uint8_t attempt = 0; attempt < 2; attempt++) {
+		ledc_mode_t mode = LEDC_LOW_SPEED_MODE;
 
-		// --- 1. Find a free channel ---
-	int8_t channel = -1;
-	for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
-		if (!_PwmChannelsInUse[i]) {
-			channel = i;
-			break;
+		switch (modeRequest) {
+			case PwmModeRequest::LowSpeed:
+				if (attempt > 0) {
+					return nullptr;
+				}
+				mode = LEDC_LOW_SPEED_MODE;
+				break;
+
+			case PwmModeRequest::HighSpeed:
+				if (attempt > 0) {
+					return nullptr;
+				}
+				mode = LEDC_HIGH_SPEED_MODE;
+				break;
+
+			case PwmModeRequest::Auto:
+			default:
+				mode = (attempt == 0) ? LEDC_HIGH_SPEED_MODE : LEDC_LOW_SPEED_MODE;
+				break;
 		}
+
+		if (!isModeSupported(mode)) {
+			continue;
+		}
+
+		uint8_t modeIdx = modeIndex(mode);
+
+		  // --- 1. Find a free channel in selected mode ---
+		int8_t channel = -1;
+		for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
+			if (!_PwmChannelsInUse[modeIdx][i]) {
+				channel = i;
+				break;
+			}
+		}
+		if (channel == -1) {
+			continue;
+		}
+
+		  // --- 2. Find or allocate a timer in selected mode ---
+		int8_t timer = allocateTimer(mode, freq);
+		if (timer == -1) {
+			continue;
+		}
+
+		_PwmTimers[modeIdx][timer].clients++;
+
+		  // --- 3. Hardware configuration (LEDC Channel only) ---
+		ledc_channel_config_t config = {
+			.gpio_num   = pin,
+			.speed_mode = mode,
+			.channel    = (ledc_channel_t)channel,
+			.intr_type  = LEDC_INTR_DISABLE,
+			.timer_sel  = (ledc_timer_t)timer,
+			.duty       = 0,
+			.hpoint     = 0
+		};
+
+		if (ledc_channel_config(&config) != ESP_OK) {
+			releaseResource((uint8_t)channel, (uint8_t)timer, mode);
+			continue;
+		}
+
+		  // --- 4. Update channel and timer clients lease data ---
+		_PwmChannelsInUse[modeIdx][channel] = true;
+
+		uint32_t maxDuty = (uint32_t)((1 << _PwmTimers[modeIdx][timer].resolution) - 1);
+		return std::make_unique<Esp32PwmControl>(pin, channel, timer, mode, freq, maxDuty);
 	}
-	if (channel == -1) return nullptr; 
 
-		// --- 2. Find or allocate a timer ---
-	int8_t timer = allocateTimer(freq);
-	if (timer == -1) return nullptr;
-
-    // add client to timer lease counter
-  _PwmTimers[timer].clients++;
-
-		// --- 3. Hardware configuration (LEDC Channel only) ---
-	ledc_channel_config_t config = {
-		.gpio_num   = pin,
-		.speed_mode = LEDC_LOW_SPEED_MODE,
-		.channel    = (ledc_channel_t)channel,
-		.intr_type  = LEDC_INTR_DISABLE,
-		.timer_sel  = (ledc_timer_t)timer,
-		.duty       = 0,
-		.hpoint     = 0
-	};
-	
-    // release timer and channel if configuration fails
-	if (ledc_channel_config(&config) != ESP_OK) {
-		releaseResource(channel, timer); 
-		return nullptr;
-	}
-
-		// --- 4. Update channel and timer clients lease data ---
-	_PwmChannelsInUse[channel] = true;
-	
-	uint32_t maxDuty = (uint32_t)((1 << _PwmTimers[timer].resolution) - 1);
-
-	return std::make_unique<Esp32PwmControl>(pin, channel, timer, freq, maxDuty);
+	return nullptr;
 }
 
 
@@ -116,21 +150,27 @@ std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_
  * a motor object is deleted unexpectedly.
  */
 
-void Esp32PwmBroker::releaseResource(uint8_t channel, uint8_t timer) {
+void Esp32PwmBroker::releaseResource(uint8_t channel, uint8_t timer, ledc_mode_t mode) {
+	if (!isModeSupported(mode)) {
+		return;
+	}
+
+	uint8_t modeIdx = modeIndex(mode);
+
 		// 1. Channel Release
 	if (channel < LEDC_CHANNEL_MAX) {
-		_PwmChannelsInUse[channel] = false;
+		_PwmChannelsInUse[modeIdx][channel] = false;
 	}
 
 		// 2. Timer release
 	if (timer < LEDC_TIMER_MAX) {
-		if (_PwmTimers[timer].clients > 0) {
-			_PwmTimers[timer].clients--;
+		if (_PwmTimers[modeIdx][timer].clients > 0) {
+			_PwmTimers[modeIdx][timer].clients--;
 		}
 
 			// 3. Optional: Dynamic cleanup if no one is using this timer anymore
-		if (_PwmTimers[timer].clients == 0) {
-			_PwmTimers[timer].frequency = 0;
+		if (_PwmTimers[modeIdx][timer].clients == 0) {
+			_PwmTimers[modeIdx][timer].frequency = 0;
 		}
 	}
 }
@@ -149,9 +189,11 @@ void Esp32PwmBroker::releaseResource(uint8_t channel, uint8_t timer) {
  */
 
 Esp32PwmBroker::Esp32PwmBroker() {
-		// Initialize all channels as free
-	for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
-		_PwmChannelsInUse[i] = false;
+		// Initialize all channels as free for each mode
+	for (uint8_t modeIdx = 0; modeIdx < 2; modeIdx++) {
+		for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
+			_PwmChannelsInUse[modeIdx][i] = false;
+		}
 	}
 }
 
@@ -164,20 +206,26 @@ Esp32PwmBroker::Esp32PwmBroker() {
  * possible bit resolution using a silent hardware test.
  */
 
-int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
+int8_t Esp32PwmBroker::allocateTimer(ledc_mode_t mode, uint32_t freq) {
+	if (!isModeSupported(mode)) {
+		return -1;
+	}
+
+	uint8_t modeIdx = modeIndex(mode);
+
 		// --- 1. Search for an existing timer with the same frequency ---
 	for (uint8_t i = 0; i < LEDC_TIMER_MAX; i++) {
-		if (_PwmTimers[i].clients > 0 && _PwmTimers[i].frequency == freq) {
+		if (_PwmTimers[modeIdx][i].clients > 0 && _PwmTimers[modeIdx][i].frequency == freq) {
 			return (int8_t)i; // Found a match! Let's share.
 		}
 	}
 
 		// --- 2. Search for a totally free timer slot ---
 	for (uint8_t i = 0; i < LEDC_TIMER_MAX; i++) {
-		if (_PwmTimers[i].clients == 0) {
+		if (_PwmTimers[modeIdx][i].clients == 0) {
 				// --- 3. Hardware Test (Automatic Resolution) ---
 			ledc_timer_config_t config;
-			config.speed_mode = LEDC_LOW_SPEED_MODE;
+			config.speed_mode = mode;
 			config.timer_num  = (ledc_timer_t)i;
 			config.freq_hz    = freq;
 			config.clk_cfg    = LEDC_AUTO_CLK;
@@ -199,8 +247,8 @@ int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
 
 			  // If a valid resolution was found
 			if (resBit > 0) {
-				_PwmTimers[i].frequency = freq;
-				_PwmTimers[i].resolution = (ledc_timer_bit_t)resBit;
+				_PwmTimers[modeIdx][i].frequency = freq;
+				_PwmTimers[modeIdx][i].resolution = (ledc_timer_bit_t)resBit;
 				return (int8_t)i;
 			}
 		}
@@ -212,4 +260,21 @@ int8_t Esp32PwmBroker::allocateTimer(uint32_t freq) {
 int Esp32PwmBroker::espSilentLog(const char* string, va_list args) {
 	_logHasOccured = vsnprintf(nullptr, 0, string, args);
 	return 0;
+}
+
+uint8_t Esp32PwmBroker::modeIndex(ledc_mode_t mode) {
+	return (mode == LEDC_HIGH_SPEED_MODE) ? 1 : 0;
+}
+
+bool Esp32PwmBroker::isModeSupported(ledc_mode_t mode) {
+	if (mode == LEDC_LOW_SPEED_MODE) {
+		return true;
+	}
+
+#if defined(SOC_LEDC_SUPPORT_HS_MODE) && SOC_LEDC_SUPPORT_HS_MODE
+	return true;
+#else
+	(void)mode;
+	return false;
+#endif
 }

@@ -22,7 +22,7 @@ class Esp32PwmControl : public PwmControl {
 public:
 
 		/// Constructor used exclusively by the Esp32PwmBroker.
-	Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, uint32_t freq, uint32_t maxDuty);
+	Esp32PwmControl(uint8_t pin, uint8_t channel, uint8_t timer, ledc_mode_t mode, uint32_t freq, uint32_t maxDuty);
 	
 		/// Destructor ensuring the resource is released back to the Broker.
 	virtual ~Esp32PwmControl();
@@ -45,6 +45,7 @@ private:
 	uint8_t        _pin;          ///< Physical GPIO pin number.
 	ledc_channel_t _channel;      ///< ESP32 hardware channel (0-15).
 	ledc_timer_t   _timer;        ///< Assigned hardware timer (0-3).
+	ledc_mode_t    _mode;         ///< Assigned hardware speed mode (LOW/HIGH).
 	uint32_t       _frequency;    ///< PWM signal frequency in Hz.
 	uint32_t       _maxDuty;      ///< Maximum duty cycle value for current resolution.
 };

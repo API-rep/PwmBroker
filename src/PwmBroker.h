@@ -13,6 +13,12 @@
 #include "PwmControl.h"
 #include <memory>
 
+enum class PwmModeRequest : uint8_t {
+	Auto = 0,
+	LowSpeed,
+	HighSpeed
+};
+
 class PwmBroker {
 
 public:
@@ -20,8 +26,8 @@ public:
     /// Access the unique instance of the Broker (Singleton).
 	static PwmBroker& getInstance();
 
-    /// Prototype for requesting a PWM resource (Lease) for a specific pin and frequency.
-	virtual std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq) = 0;
+    /// Prototype for requesting a PWM resource (Lease) for a specific pin at given frequency and mode.
+	virtual std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest = PwmModeRequest::Auto) = 0;
 
 
 protected:
