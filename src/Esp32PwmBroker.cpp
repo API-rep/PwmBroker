@@ -58,7 +58,7 @@ Esp32PwmBroker& Esp32PwmBroker::getInstance() {
  * fails at any step, it returns a nullptr safely, preventing motor startup.
  */
 
-std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest) {
+std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest, int8_t timerHint, int8_t channelHint) {
 	for (uint8_t attempt = 0; attempt < 2; attempt++) {
 		ledc_mode_t mode = LEDC_LOW_SPEED_MODE;
 
@@ -89,20 +89,25 @@ std::unique_ptr<PwmControl> Esp32PwmBroker::requestResource(uint8_t pin, uint32_
 
 		uint8_t modeIdx = modeIndex(mode);
 
-		  // --- 1. Find a free channel in selected mode ---
+		// --- 1. Find channel in selected mode (hint preferred, then first free) ---
 		int8_t channel = -1;
-		for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
-			if (!_PwmChannelsInUse[modeIdx][i]) {
-				channel = i;
-				break;
+		if (channelHint >= 0 && channelHint < (int8_t)LEDC_CHANNEL_MAX
+		    && !_PwmChannelsInUse[modeIdx][(uint8_t)channelHint]) {
+			channel = channelHint;
+		} else {
+			for (uint8_t i = 0; i < LEDC_CHANNEL_MAX; i++) {
+				if (!_PwmChannelsInUse[modeIdx][i]) {
+					channel = i;
+					break;
+				}
 			}
 		}
 		if (channel == -1) {
 			continue;
 		}
 
-		  // --- 2. Find or allocate a timer in selected mode ---
-		int8_t timer = allocateTimer(mode, freq);
+		  // --- 2. Find or allocate a timer in selected mode (hint preferred) ---
+		int8_t timer = allocateTimer(mode, freq, timerHint);
 		if (timer == -1) {
 			continue;
 		}
@@ -206,55 +211,64 @@ Esp32PwmBroker::Esp32PwmBroker() {
  * possible bit resolution using a silent hardware test.
  */
 
-int8_t Esp32PwmBroker::allocateTimer(ledc_mode_t mode, uint32_t freq) {
+int8_t Esp32PwmBroker::allocateTimer(ledc_mode_t mode, uint32_t freq, int8_t hint) {
 	if (!isModeSupported(mode)) {
 		return -1;
 	}
 
 	uint8_t modeIdx = modeIndex(mode);
 
-		// --- 1. Search for an existing timer with the same frequency ---
+		// --- 1. Search for an existing timer with the same frequency (shared, no hint needed) ---
 	for (uint8_t i = 0; i < LEDC_TIMER_MAX; i++) {
 		if (_PwmTimers[modeIdx][i].clients > 0 && _PwmTimers[modeIdx][i].frequency == freq) {
-			return (int8_t)i; // Found a match! Let's share.
+			return (int8_t)i;
 		}
 	}
 
-		// --- 2. Search for a totally free timer slot ---
+		// --- 2. Discover and configure a free timer; try hint first, then scan ---
+	auto tryConfigureTimer = [&](uint8_t i) -> int8_t {
+		if (_PwmTimers[modeIdx][i].clients > 0) return -1;  // already in use
+
+		ledc_timer_config_t config;
+		config.speed_mode = mode;
+		config.timer_num  = (ledc_timer_t)i;
+		config.freq_hz    = freq;
+		config.clk_cfg    = LEDC_AUTO_CLK;
+
+		uint8_t resBit = 14;
+		esp_log_set_vprintf(&Esp32PwmBroker::espSilentLog);
+
+		while (resBit > 0) {
+			_logHasOccured = 0;
+			config.duty_resolution = (ledc_timer_bit_t)resBit;
+
+			if (ledc_timer_config(&config) == ESP_OK && _logHasOccured == 0) {
+				break;
+			}
+			resBit--;
+		}
+		esp_log_set_vprintf(&vprintf);
+
+		if (resBit > 0) {
+			_PwmTimers[modeIdx][i].frequency  = freq;
+			_PwmTimers[modeIdx][i].resolution = (ledc_timer_bit_t)resBit;
+			return (int8_t)i;
+		}
+		return -1;
+	};
+
+	if (hint >= 0 && hint < (int8_t)LEDC_TIMER_MAX) {
+		int8_t r = tryConfigureTimer((uint8_t)hint);
+		if (r >= 0) return r;
+	}
+
 	for (uint8_t i = 0; i < LEDC_TIMER_MAX; i++) {
-		if (_PwmTimers[modeIdx][i].clients == 0) {
-				// --- 3. Hardware Test (Automatic Resolution) ---
-			ledc_timer_config_t config;
-			config.speed_mode = mode;
-			config.timer_num  = (ledc_timer_t)i;
-			config.freq_hz    = freq;
-			config.clk_cfg    = LEDC_AUTO_CLK;
-
-			uint8_t resBit = 14; // Start with high precision
-			esp_log_set_vprintf(&Esp32PwmBroker::espSilentLog);
-
-			while (resBit > 0) {
-				_logHasOccured = 0;
-				config.duty_resolution = (ledc_timer_bit_t)resBit;
-				
-				  // Test if the ESP32 hardware accepts this resolution for this frequency
-				if (ledc_timer_config(&config) == ESP_OK && _logHasOccured == 0) {
-					break; // Found the best stable resolution!
-				}
-				resBit--;
-			}
-			esp_log_set_vprintf(&vprintf); // Restore standard serial logs
-
-			  // If a valid resolution was found
-			if (resBit > 0) {
-				_PwmTimers[modeIdx][i].frequency = freq;
-				_PwmTimers[modeIdx][i].resolution = (ledc_timer_bit_t)resBit;
-				return (int8_t)i;
-			}
-		}
+		if (i == (uint8_t)hint) continue;  // already tried
+		int8_t r = tryConfigureTimer(i);
+		if (r >= 0) return r;
 	}
 
-	return -1; // Error: No timers available or frequency incompatible
+	return -1;
 }
 
 int Esp32PwmBroker::espSilentLog(const char* string, va_list args) {

@@ -25,7 +25,10 @@ public:
   static Esp32PwmBroker& getInstance();
 
 		/// Realize the PWM lease by allocating physical ESP32 resources.
-	std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest = PwmModeRequest::Auto) override;
+	std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq,
+	                                             PwmModeRequest modeRequest = PwmModeRequest::Auto,
+	                                             int8_t timerHint   = -1,
+	                                             int8_t channelHint = -1) override;
 
     /// Release hardware resources and update internal tracking data.
 	void releaseResource(uint8_t channel, uint8_t timer, ledc_mode_t mode);
@@ -50,8 +53,9 @@ private:
     /// Array to track channels usage, per speed mode.
   bool  _PwmChannelsInUse[2][LEDC_CHANNEL_MAX];
 
-    /// Find a suitable exisiting timer or allocate a new one for the requested frequency.
-  int8_t allocateTimer(ledc_mode_t mode, uint32_t freq);
+    /// Find a suitable existing timer or allocate a new one for the requested frequency.
+  /// @param hint Preferred timer index, tried first if free. -1 = no preference.
+  int8_t allocateTimer(ledc_mode_t mode, uint32_t freq, int8_t hint = -1);
 
 	/// Maps a LEDC mode to its internal array index.
 	static uint8_t modeIndex(ledc_mode_t mode);

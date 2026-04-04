@@ -27,7 +27,12 @@ public:
 	static PwmBroker& getInstance();
 
     /// Prototype for requesting a PWM resource (Lease) for a specific pin at given frequency and mode.
-	virtual std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq, PwmModeRequest modeRequest = PwmModeRequest::Auto) = 0;
+	/// @param timerHint   Preferred timer index (-1 = no preference).
+	/// @param channelHint Preferred channel index (-1 = no preference).
+	virtual std::unique_ptr<PwmControl> requestResource(uint8_t pin, uint32_t freq,
+	                                                     PwmModeRequest modeRequest = PwmModeRequest::Auto,
+	                                                     int8_t timerHint   = -1,
+	                                                     int8_t channelHint = -1) = 0;
 
 
 protected:
